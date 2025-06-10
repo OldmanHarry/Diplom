@@ -1,0 +1,15 @@
+terraform {
+  required_providers {
+    yandex = {
+      source  = "yandex-cloud/yandex"
+      version = "0.61.0" # Или актуальная версия, которую можно посмотреть на https://registry.terraform.io/providers/yandex-cloud/yandex/latest/docs
+    }
+  }
+}
+
+provider "yandex" {
+  token     = "<ВАШ_OAUTH_ТОКЕН>"  # Например, через переменную окружения `export YC_TOKEN="<ВАШ_ТОКЕН>"`
+  cloud_id  = "<ВАШ_CLOUD_ID>"    # Идентификатор вашего облака
+  folder_id = "<ВАШ_FOLDER_ID>"   # Идентификатор вашего каталога
+  zone      = "ru-central1-a"     # Зона доступности. Можно изменить при необходимости.
+}
