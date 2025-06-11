@@ -1,4 +1,4 @@
-# Создаем служебный сервер 'srv'
+# служебный сервер 'srv'
 resource "yandex_compute_instance" "srv" {
   name        = "srv"
   zone        = "ru-central1-a" 
@@ -19,7 +19,7 @@ resource "yandex_compute_instance" "srv" {
   }
 
   network_interface {
-    # Создаем новую сеть и подсеть, если их нет
+    # сеть и подсеть
     subnet_id = yandex_vpc_subnet.main.id
     nat       = true # Разрешить публичный IP-адрес для доступа из интернета
   }
@@ -29,12 +29,12 @@ resource "yandex_compute_instance" "srv" {
   }
 }
 
-# Создаем VPC сеть
+# VPC сеть
 resource "yandex_vpc_network" "main" {
   name = "main-network"
 }
 
-# Создаем подсеть в нашей сети
+# подсеть в нашей сети
 resource "yandex_vpc_subnet" "main" {
   name           = "main-subnet-a"
   zone           = "ru-central1-a" 
