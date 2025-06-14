@@ -1,0 +1,14 @@
+# Terraform state files
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Mac and Windows junk
+.DS_Store
+Thumbs.db

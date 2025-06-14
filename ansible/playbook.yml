@@ -1,0 +1,165 @@
+---
+# === НАСТРОЙКА СЕРВЕРА SRV ===
+- name: 1. Setup SRV server
+  hosts: srv
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+      changed_when: false
+
+    - name: Install required packages on SRV
+      apt:
+        name:
+          - docker.io
+          - docker-compose
+          - git
+          - curl
+          - wget
+        state: present
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add 'ubuntu' user to the 'docker' group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+# === НАСТРОЙКА K8S НОД (MASTER + APP) ===
+- name: 2. Setup Kubernetes nodes (master and app)
+  hosts: k8s_cluster
+  become: yes
+  tasks:
+    # ШАГ 1: Установка базовых пакетов БЕЗ обновления кэша, т.к. apt может быть сломан
+    - name: Install prerequisites
+      apt:
+        name:
+          - docker.io
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gpg
+        state: present
+
+    # ШАГ 2: Запускаем Docker
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    # ШАГ 3: ОЧИСТКА от старых попыток. Этот шаг теперь идемпотентен.
+    - name: Clean up old kubernetes repository files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/kubernetes.list
+        - /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    # ШАГ 4: Теперь, когда всё чисто, обновляем кэш
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    # ШАГ 5: Добавляем репозиторий и ключ Kubernetes
+    - name: Add Kubernetes GPG key and repository
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+    # ШАГ 6: Снова обновляем кэш, чтобы подхватить новый репозиторий
+    - name: Update apt cache again for new repo
+      apt:
+        update_cache: yes
+
+    # ШАГ 7: Устанавливаем компоненты K8s
+    - name: Install Kubernetes components
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        
+    # ШАГ 8: Холдим пакеты
+    - name: Hold Kubernetes packages
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+# === ИНИЦИАЛИЗАЦИЯ MASTER НОДЫ ===
+- name: 3. Initialize Kubernetes Master
+  hosts: k8s-master
+  become: yes
+  tasks:
+    - name: Check if cluster is already initialized
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: kube_init_stat
+
+    - name: Initialize Kubernetes cluster with kubeadm
+      command: kubeadm init --pod-network-cidr=10.244.0.0/16
+      when: not kube_init_stat.stat.exists
+
+    - name: Create .kube directory for ubuntu user
+      file:
+        path: /home/ubuntu/.kube
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      when: not kube_init_stat.stat.exists
+
+    - name: Copy admin.conf to user's kube config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/ubuntu/.kube/config
+        owner: ubuntu
+        group: ubuntu
+        remote_src: yes
+      when: not kube_init_stat.stat.exists
+
+    - name: Install Flannel CNI
+      become: false
+      command: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+      when: not kube_init_stat.stat.exists
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+# === ПОЛУЧЕНИЕ ТОКЕНА ДЛЯ ПРИСОЕДИНЕНИЯ ===
+- name: 4. Get join command from Master
+  hosts: k8s-master
+  become: yes
+  tasks:
+    - name: Generate a new join token
+      command: kubeadm token create --print-join-command
+      register: join_command_raw
+
+    - name: Set join command as a fact
+      set_fact:
+        join_command: "{{ join_command_raw.stdout }}"
+
+# === ПРИСОЕДИНЕНИЕ WORKER НОДЫ ===
+- name: 5. Join Worker node to the cluster
+  hosts: k8s-app
+  become: yes
+  tasks:
+    - name: Check if node is already in cluster
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf_stat
+      
+    - name: Join the worker node to the cluster
+      command: "{{ hostvars['k8s-master'].join_command }}"
+      when: not kubelet_conf_stat.stat.exists
